@@ -1,7 +1,10 @@
-use std::collections::LinkedList;
+
 use std::sync::Arc;
 
 use crate::data_source::DataSource;
+
+pub const PAGE_SIZE: usize = 4096;
+pub const ADDR_MAX: usize = (1 << 38) - 1;
 
 type VirtualAddress = usize;
 
@@ -12,10 +15,21 @@ struct MapEntry {
     addr: usize,
 }
 
+impl MapEntry {
+    pub fn new(source: Arc<dyn DataSource>, offset: usize, span: usize, addr: usize) -> MapEntry {
+        MapEntry {
+            source: source.clone(),
+            offset,
+            span,
+            addr,
+        }
+    }
+}
+
 /// An address space.
 pub struct AddressSpace {
     name: String,
-    mappings: LinkedList<MapEntry>, // see below for comments
+    mappings: Vec<MapEntry>, // see below for comments
 }
 
 // comments about storing mappings
@@ -34,7 +48,7 @@ impl AddressSpace {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            mappings: LinkedList::new(),
+            mappings: Vec::new(),
         }
     }
 
@@ -42,27 +56,66 @@ impl AddressSpace {
     ///
     /// # Errors
     /// If the desired mapping is invalid.
-    pub fn add_mapping<D: DataSource>(
-        &self,
-        source: &D,
+    pub fn add_mapping<D: DataSource + 'static>(
+        &mut self,
+        source: Arc<D>,
         offset: usize,
         span: usize,
     ) -> Result<VirtualAddress, &str> {
-        todo!()
+        // basically dont map at 0, wnat to find first open space the size of span
+        // if you run out of mappings to go through stick it at the end
+        // unless there is no room, then say cant do it
+        let mut possible_address = PAGE_SIZE;
+        let mut open_space;
+        let mut index:usize = 0;
+        for i in &self.mappings {
+            open_space = i.addr - possible_address;
+            if open_space > span+2 * PAGE_SIZE {
+                break;
+            }
+            index = index + 1;
+            possible_address = i.addr + i.span;
+        }
+        if possible_address + span  + 2 * PAGE_SIZE < ADDR_MAX {
+            possible_address = possible_address + PAGE_SIZE;
+            let new_mapping = MapEntry::new(source, offset, span, possible_address);
+            self.mappings.insert(index, new_mapping);
+            return Ok(possible_address);
+        }
+        return Err("No space available");
     }
 
     /// Add a mapping from `DataSource` into this `AddressSpace` starting at a specific address.
     ///
     /// # Errors
     /// If there is insufficient room subsequent to `start`.
-    pub fn add_mapping_at<D: DataSource>(
-        &self,
-        source: &D,
+    pub fn add_mapping_at<D: DataSource+ 'static>(
+        &mut self,
+        source: Arc<D>,
         offset: usize,
         span: usize,
         start: VirtualAddress,
     ) -> Result<(), &str> {
-        todo!()
+        let mut current_address = self.mappings[0].addr;
+        let mut index:usize = 0;
+        while current_address < start {
+            index = index + 1;
+            current_address = self.mappings[index].addr;
+        }
+        if current_address - start > span {
+            let previous_end = self.mappings[index-1].addr + self.mappings[index-1].span;
+            if previous_end < start {
+                let new_address = start + PAGE_SIZE;
+                let new_mapping = MapEntry::new(source, offset, span, new_address);
+                let mut temp_vec = vec![new_mapping];
+                self.mappings.append(&mut temp_vec);
+                return Ok(());
+            } else {
+                return Err("No space available");
+            }
+        }
+        return Err("No space available");
+
     }
 
     /// Remove the mapping to `DataSource` that starts at the given address.
@@ -70,11 +123,19 @@ impl AddressSpace {
     /// # Errors
     /// If the mapping could not be removed.
     pub fn remove_mapping<D: DataSource>(
-        &self,
+        &mut self,
         source: &D,
         start: VirtualAddress,
     ) -> Result<(), &str> {
-        todo!()
+        let mut index:usize = 0;
+        for mappings in &self.mappings {
+            if mappings.addr == start {
+                self.mappings.remove(index);
+                return Ok(());
+            }
+            index = index + 1
+        }
+        return Err("Not possible to remove mapping")
     }
 
     /// Look up the DataSource and offset within that DataSource for a
@@ -88,7 +149,13 @@ impl AddressSpace {
         addr: VirtualAddress,
         access_type: FlagBuilder
     ) -> Result<(&D, usize), &str> {
-        todo!();
+        let mut index:usize = 0;
+        for mapping in self.mappings {
+            if mapping.addr == addr { //this doesnt work to access D
+                return Ok((*mapping.source, mapping.offset));
+            }
+        }
+        return Err("Not possible to return source for address")
     }
 }
 
