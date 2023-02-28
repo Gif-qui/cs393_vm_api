@@ -124,7 +124,7 @@ impl AddressSpace {
     /// If the mapping could not be removed.
     pub fn remove_mapping<D: DataSource>(
         &mut self,
-        source: &D,
+        source: Arc<D>,
         start: VirtualAddress,
     ) -> Result<(), &str> {
         let mut index:usize = 0;
@@ -148,11 +148,12 @@ impl AddressSpace {
         &self,
         addr: VirtualAddress,
         access_type: FlagBuilder
-    ) -> Result<(&D, usize), &str> {
+    ) -> Result<(Arc<D>, usize), &str> {
         let mut index:usize = 0;
-        for mapping in self.mappings {
-            if mapping.addr == addr { //this doesnt work to access D
-                return Ok((*mapping.source, mapping.offset));
+        for mapping in self.mappings { //this doesnt work
+            if mapping.addr == addr { //im unsure as to how to return something of type D
+                                    //im pretty sure its just DataSource, but it doesnt agree when i return mapping.source
+                return Ok((mapping.source, mapping.offset));
             }
         }
         return Err("Not possible to return source for address")
